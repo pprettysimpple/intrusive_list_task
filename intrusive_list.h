@@ -10,9 +10,13 @@ namespace intrusive {
     struct list_element {
         list_element *next = nullptr, *prev = nullptr;
 
-        void unlink() {
-            next->prev = prev;
-            prev->next = next;
+        void unlink() noexcept {
+            if (next != nullptr) {
+                next->prev = prev;
+            }
+            if (prev != nullptr) {
+                prev->next = next;
+            }
             next = nullptr;
             prev = nullptr;
         }
@@ -117,6 +121,8 @@ namespace intrusive {
         list(list&&) noexcept;
         ~list();
 
+        void swap(list&) noexcept;
+
         list<T, Tag>& operator=(list const&) = delete;
         list<T, Tag>& operator=(list&&) noexcept;
 
@@ -145,18 +151,18 @@ namespace intrusive {
         void splice(const_iterator pos, list&, const_iterator first, const_iterator last) noexcept;
 
     private:
-        std::unique_ptr<list_element<Tag>> fake;
+        list_element<Tag> fake;
     };
 
     template<typename T, typename Tag>
-    list<T, Tag>::list() noexcept : fake(new list_element<Tag>()) {
-        fake.get()->next = fake.get();
-        fake.get()->prev = fake.get();
+    list<T, Tag>::list() noexcept : fake() {
+        fake.next = &fake;
+        fake.prev = &fake;
     }
 
     template<typename T, typename Tag>
     list<T, Tag>::list(list&& rhs) noexcept : list() {
-        fake.swap(rhs.fake);
+        swap(rhs);
         rhs.clear();
     }
 
@@ -167,15 +173,15 @@ namespace intrusive {
 
     template<typename T, typename Tag>
     list<T, Tag>& list<T, Tag>::operator=(list&& rhs) noexcept {
-        fake.swap(rhs.fake);
+        swap(rhs);
         rhs.clear();
         return *this;
     }
 
     template<typename T, typename Tag>
     void list<T, Tag>::clear() noexcept {
-        while (fake.get()->next != fake.get()) {
-            fake.get()->next->unlink();
+        while (fake.next != &fake) {
+            fake.next->unlink();
         }
     }
 
@@ -184,25 +190,25 @@ namespace intrusive {
         static_assert(std::is_convertible_v<T&, list_element<Tag>&>,
                       "value type is not convertible to list_element");
         auto &cur = static_cast<list_element<Tag>&>(val);
-        cur.next = fake.get();
-        cur.prev = fake.get()->prev;
-        fake.get()->prev->next = &cur;
-        fake.get()->prev = &cur;
+        cur.next = &fake;
+        cur.prev = fake.prev;
+        fake.prev->next = &cur;
+        fake.prev = &cur;
     }
 
     template<typename T, typename Tag>
     void list<T, Tag>::pop_back() noexcept {
-        fake.get()->prev->unlink();
+        fake.prev->unlink();
     }
 
     template<typename T, typename Tag>
     T& list<T, Tag>::back() noexcept {
-        return static_cast<T&>(*(fake.get()->prev));
+        return static_cast<T&>(*(fake.prev));
     }
 
     template<typename T, typename Tag>
     T const& list<T, Tag>::back() const noexcept {
-        return static_cast<T const&>(*(fake.get()->prev));
+        return static_cast<T const&>(*(fake.prev));
     }
 
     template<typename T, typename Tag>
@@ -210,50 +216,50 @@ namespace intrusive {
         static_assert(std::is_convertible_v<T&, list_element<Tag>&>,
                       "value type is not convertible to list_element");
         auto &cur = static_cast<list_element<Tag>&>(val);
-        cur.prev = fake.get();
-        cur.next = fake.get()->next;
-        fake.get()->next->prev = &cur;
-        fake.get()->next = &cur;
+        cur.prev = &fake;
+        cur.next = fake.next;
+        fake.next->prev = &cur;
+        fake.next = &cur;
     }
 
     template<typename T, typename Tag>
     void list<T, Tag>::pop_front() noexcept {
-        fake.get()->next->unlink();
+        fake.next->unlink();
     }
 
     template<typename T, typename Tag>
     T& list<T, Tag>::front() noexcept {
-        return static_cast<T&>(*(fake.get()->next));
+        return static_cast<T&>(*(fake.next));
     }
 
     template<typename T, typename Tag>
     T const& list<T, Tag>::front() const noexcept {
-        return static_cast<T const&>(*(fake.get()->next));
+        return static_cast<T const&>(*(fake.next));
     }
 
     template<typename T, typename Tag>
     bool list<T, Tag>::empty() const noexcept {
-        return fake.get() == fake.get()->next;
+        return &fake == fake.next;
     }
 
     template<typename T, typename Tag>
     typename list<T, Tag>::iterator list<T, Tag>::begin() noexcept {
-        return intrusive::list<T, Tag>::iterator(fake.get()->next);
+        return intrusive::list<T, Tag>::iterator(fake.next);
     }
 
     template<typename T, typename Tag>
     typename list<T, Tag>::iterator list<T, Tag>::end() noexcept {
-        return intrusive::list<T, Tag>::iterator(fake.get());
+        return intrusive::list<T, Tag>::iterator(&fake);
     }
 
     template<typename T, typename Tag>
     typename list<T, Tag>::const_iterator list<T, Tag>::begin() const noexcept {
-        return intrusive::list<T, Tag>::const_iterator(fake.get()->next);
+        return intrusive::list<T, Tag>::const_iterator(fake.next);
     }
 
     template<typename T, typename Tag>
     typename list<T, Tag>::const_iterator list<T, Tag>::end() const noexcept {
-        return intrusive::list<T, Tag>::const_iterator(fake.get());
+        return intrusive::list<T, Tag>::const_iterator(const_cast<list_element<Tag>*>(&fake));
     }
 
     template<typename T, typename Tag>
@@ -294,5 +300,20 @@ namespace intrusive {
 
         from_left.prev = &to_left;
         from_right.next = &to_right;
+    }
+
+    template<typename T, typename Tag>
+    void list<T, Tag>::swap(list &rhs) noexcept {
+        auto &my_next = *(fake.next);
+        auto &my_prev = *(fake.prev);
+        my_next.prev = &(rhs.fake);
+        my_prev.next = &(rhs.fake);
+
+        auto &rhs_next = *(rhs.fake.next);
+        auto &rhs_prev = *(rhs.fake.prev);
+        rhs_next.prev = &fake;
+        rhs_prev.next = &fake;
+
+        std::swap(fake, rhs.fake);
     }
 }
